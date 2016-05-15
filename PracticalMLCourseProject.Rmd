@@ -1,0 +1,184 @@
+---
+output: html_document
+---
+```{r setoptions, echo = FALSE}
+
+library (knitr)
+opts_chunk $ set (comment = "  ", echo = TRUE, warning = FALSE, message = FALSE)
+
+setwd("J:/00 COURSERA/00 DATA SCIENCE SPECIALIZATION/00 Practical Machine Learning/Week 4 Regularized Regression and Combining Predictors/Course Project")
+```
+
+---
+title:  "Quantification of Quality of Personal Activity"
+author: "Srinivas Chakravarty"
+date:   "`r format(Sys.time(), '%d %B, %Y')`"
+
+---
+
+## 1. Background
+
+It is possible to collect a large amount of data about personal activity relatively inexpensively, by using devices such as Jawbone Up, Nike FuelBand, and Fitbit. While people regularly quantify how much of a particular activity they do, they rarely quantify how well they do it.
+
+This project quantifies how 6 participants performed barbell lifts by analyzing data from accelerometers on the belt, forearm, arm, and dumbell of those participants.
+
+## 2. Approach
+
+In order to quantify the performance of the participants, the following steps were followed -
+
+a) Download the data provided in the datasets *pml-training.csv* and *pml-testing.csv*.
+b) Cleanse the data in the two datasets.
+c) Slice the cleansed training data into *Training* and *Validation* datasets (75 : 25).
+d) Develop the *Prediction Model* with *Random Forests* against the *Training* dataset.
+e) Measure the *Prediction Model* against the *Validation* dataset.
+f) Use the *Prediction Model* to make predictions against the *Testing* dataset.
+
+## 3. Data Management
+
+```{r houseKeeping, echo = TRUE, results = "hide"}
+
+# Load libraries as needed
+
+pkgsNeeded <- c ("caret", "rpart", "rpart.plot")
+sapply (pkgsNeeded, library, character.only = TRUE)
+
+```
+
+```{r loadData, echo = TRUE}
+
+# Load Training and Test Data into Data Frames
+
+trainUrlName <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrlName <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainData <- "./pml-training.csv"
+testData <- "./pml-testing.csv"
+
+if (!file.exists(trainData)) {
+  download.file(trainUrlName, destfile=trainData)
+}
+if (!file.exists(testData)) {
+  download.file(testUrlName, destfile=testData)
+}
+
+fullTrainDF <- read.csv("./pml-training.csv")
+fullTestDF <- read.csv("./pml-testing.csv")
+
+noImpactCols <- grep("^X$|user_name|timestamp|window", names(fullTrainDF))
+retainCols <- colnames(fullTrainDF[colSums(is.na(fullTrainDF)) == 0])[-noImpactCols]
+
+reducedTrainDF <- data.frame(
+  (fullTrainDF[retainCols])[, sapply(fullTrainDF[retainCols], is.numeric)],
+  fullTrainDF["classe"])
+
+testData <- fullTestDF[colnames(reducedTrainDF)[1:length(colnames(reducedTrainDF)) - 1]]
+
+
+# Split Data into Training and Validation Datasets
+
+library(caret)
+set.seed(as.integer(.Machine$integer.max))
+
+inTrainData <- createDataPartition(y = reducedTrainDF$classe, p = 0.75, list = FALSE)
+trainingData <- reducedTrainDF[inTrainData, ]
+validationData <- reducedTrainDF[-inTrainData, ]
+
+```
+
+## 4. Prediction Model
+
+As Ned Horning (Ref: Random Forests - An algorithm for image classification and generation of continuous fields data sets at http://http://wgrass.media.osaka-cu.ac.jp/gisideas10/papers/04aa1f4a8beb619e7fe711c29b7b.pdf) points out,
+
+"Performance of random forests is on par with other machine learning algorithms but it is much easier to use and more forgiving with regard to over fitting and outliers than other algorithms".
+
+The Random Forests algorithm has therefore been utilised with 10 folds of cross-validation to predict the performance of the participants.
+
+```{r predModel, echo = TRUE, results = "hide", cache = TRUE}
+
+modelRF <- train(classe ~ ., method = "rf", data = trainingData, importance = TRUE,
+                 trControl = trainControl(method = "cv", number = 10))
+
+print(modelRF)
+
+predictRF <- predict(modelRF, newdata = validationData)
+confusionMatrix(validationData$classe, predictRF)
+
+classeAccuracy <- confusionMatrix(validationData$classe, predictRF)$overall[1]
+
+```
+
+```{r printResults, echo = TRUE, results = "markup"}
+
+paste0("Using Validation Data, Accuracy of ", round(classeAccuracy * 100, 2), "%",
+       " was obtained with associated Out of Sample Error of ",
+       round(100 - classeAccuracy * 100, 2), "%")
+
+```
+
+## 5. Predictions On Test Data
+
+The *Prediction Model* is now used against the *Test Data* to predict the outcomes for each of the observations.
+
+```{r predTestData, results = "hide"}
+
+testPredictions <- predict(modelRF, newdata = testData)
+print(testPredictions)
+
+```
+
+```{r predWrite, results = "hide"}
+# Write Predictions to File
+
+pmlPredictionsToFile = function(x){
+  
+  dir.create(file.path("./predictions"), showWarnings = FALSE)
+  filename <- paste0("./predictions/predictionsML.txt")
+  predictionsML = ""
+
+  for(i in 1 : (length(x)-1)){
+    predictionsML <- paste0(predictionsML, x[i], ", ")
+  }
+  
+  predictionsML <- paste0(predictionsML, "and ", x[length(x)])
+  
+  write.table(predictionsML, file = filename, quote = FALSE, row.names = FALSE,
+              col.names = FALSE)
+ }
+
+pmlPredictionsToFile(testPredictions)
+
+```
+The 20 predictions are written to *./predictions/predictionsML.txt*.
+
+## 6. Conclusion
+
+Given the high observed accuracy  on the *Validation Data*, it was expected that the predictions on the *Test Data* would be very accurate as well.
+
+As can be seen from the submission to the Course Project Prediction Quiz for automated grading, ALL the 20 predictions (also written to *./predictions/predictionsML.txt*) have been accurate.
+
+## 7. Appendix
+
+### 7.1 Accuracy Plot
+
+```{r accuracyPlot, echo = FALSE, cache = FALSE}
+
+plot(modelRF, ylim = c(0.95, 1))
+
+```
+
+### 7.2 Decision Tree Diagram
+
+```{r treeModel, echo = TRUE, results = "markup"}
+
+decisionTreeDiagram <- rpart(classe ~ ., data = trainingData, method = "class")
+prp(decisionTreeDiagram)
+
+```
+
+## 8. Acknowledgements
+
+The data used in this project has been made available by -
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz48hOT7VWz
